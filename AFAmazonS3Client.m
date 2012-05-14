@@ -144,9 +144,16 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 }
 
 - (void)setBucket:(NSString *)bucket {
+	NSString *lowercaseBucket = [bucket lowercaseString];
+	if ([lowercaseBucket isEqualToString:_bucket]) {
+		return;
+	}
+	
+	[_bucket release];
+	
     [self willChangeValueForKey:@"baseURL"];
     [self willChangeValueForKey:@"bucket"];
-    _bucket = bucket;
+    _bucket = [lowercaseBucket retain];
     [self didChangeValueForKey:@"bucket"];
     [self didChangeValueForKey:@"baseURL"];
 }
