@@ -43,6 +43,8 @@ extern NSString * const kAFAmazonS3BaseURLString;
 - (id)initWithAccessKeyID:(NSString *)accessKey
                    secret:(NSString *)secret;
 
+@property (nonatomic, retain) NSDateFormatter *dateFormatter;
+
 /**
  
  */
@@ -134,6 +136,13 @@ extern NSString * const kAFAmazonS3BaseURLString;
                  progress:(void (^)(NSInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite))progress
                   success:(void (^)(id responseObject))success
                   failure:(void (^)(NSError *error))failure;
+
+- (void)putObjectNamed:(NSString *)objectName
+				  data:(NSData *)data
+			parameters:(NSDictionary *)parameters
+			  progress:(void (^)(NSInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite))progress
+			   success:(void (^)(id responseObject))success
+			   failure:(void (^)(NSError *error))failure;
 
 /**
  Deletes the specified object. Once deleted, there is no method to restore or undelete an object.

@@ -23,9 +23,69 @@
 
 #import "AFAmazonS3Client.h"
 #import "AFXMLRequestOperation.h"
+#import <CommonCrypto/CommonDigest.h>
+#import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonCryptor.h>
 
 NSString * const kAFAmazonS3BaseURLString = @"http://s3.amazonaws.com";
 NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws.com";
+
+static NSString * AFBase64EncodedStringFromData(NSData *data)
+{
+	static uint8_t const kAFBase64EncodingTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	
+    NSMutableString *result;
+    unsigned char   *raw;
+    unsigned long   length;
+    short           i, nCharsToWrite;
+    long            cursor;
+    unsigned char   inbytes[3], outbytes[4];
+	
+    length = [data length];
+	
+    if (length < 1) {
+        return @"";
+    }
+	
+    result = [NSMutableString stringWithCapacity:length];
+    raw    = (unsigned char *)[data bytes];
+    // Take 3 chars at a time, and encode to 4
+    for (cursor = 0; cursor < length; cursor += 3) {
+        for (i = 0; i < 3; i++) {
+            if (cursor + i < length) {
+                inbytes[i] = raw[cursor + i];
+            }
+            else{
+                inbytes[i] = 0;
+            }
+        }
+		
+        outbytes[0] = (inbytes[0] & 0xFC) >> 2;
+        outbytes[1] = ((inbytes[0] & 0x03) << 4) | ((inbytes[1] & 0xF0) >> 4);
+        outbytes[2] = ((inbytes[1] & 0x0F) << 2) | ((inbytes[2] & 0xC0) >> 6);
+        outbytes[3] = inbytes[2] & 0x3F;
+		
+        nCharsToWrite = 4;
+		
+        switch (length - cursor) {
+			case 1:
+				nCharsToWrite = 2;
+				break;
+				
+			case 2:
+				nCharsToWrite = 3;
+				break;
+        }
+        for (i = 0; i < nCharsToWrite; i++) {
+            [result appendFormat:@"%c", kAFBase64EncodingTable[outbytes[i]]];
+        }
+        for (i = nCharsToWrite; i < 4; i++) {
+            [result appendString:@"="];
+        }
+    }
+	
+    return result; // convert to immutable string
+}
 
 #pragma mark -
 
@@ -39,6 +99,8 @@ NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws
                    progress:(void (^)(NSInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite))progressBlock
                     success:(void (^)(id responseObject))success
                     failure:(void (^)(NSError *error))failure;
+- (void)signRequest:(NSMutableURLRequest *)request forObjectNamed:(NSString *)objectName;
+
 @end
 
 @implementation AFAmazonS3Client
@@ -46,6 +108,7 @@ NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws
 @synthesize bucket = _bucket;
 @synthesize accessKey = _accessKey;
 @synthesize secret = _secret;
+@synthesize dateFormatter = _dateFormatter;
 
 - (id)initWithBaseURL:(NSURL *)url {
     self = [super initWithBaseURL:url];
@@ -86,6 +149,19 @@ NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws
     _bucket = bucket;
     [self didChangeValueForKey:@"bucket"];
     [self didChangeValueForKey:@"baseURL"];
+}
+
+- (NSDateFormatter *)dateFormatter
+{
+	if (nil != _dateFormatter) {
+		return _dateFormatter;
+	}
+	
+	_dateFormatter = [[[NSDateFormatter alloc] init] autorelease];
+    [_dateFormatter setDateFormat:@"EEE, dd MMM yyyy HH:mm:ss z"];
+    [_dateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"]];
+
+	return _dateFormatter;
 }
 
 #pragma mark -
@@ -214,6 +290,42 @@ NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws
     [self setObjectWithMethod:@"PUT" file:path parameters:parameters progress:progress success:success failure:failure];
 }
 
+- (void)putObjectNamed:(NSString *)objectName
+				  data:(NSData *)data
+			parameters:(NSDictionary *)parameters
+			  progress:(void (^)(NSInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite))progress
+			   success:(void (^)(id responseObject))success
+			   failure:(void (^)(NSError *error))failure
+{
+	if (nil == data) {
+		if (failure) {
+			NSError *error = nil;
+			failure(error);
+		}
+		
+		return;
+	}
+	
+	NSMutableURLRequest *request = [self requestWithMethod:@"PUT" path:objectName parameters:parameters];
+	[request setHTTPBody:data];
+	
+	[self signRequest:request forObjectNamed:objectName];
+	
+	AFHTTPRequestOperation *requestOperation = [self HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *operation, id responseObject) {
+		if (success) {
+			success(responseObject);
+		}
+	} failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+		if (failure) {
+			failure(error);
+		}
+	}];
+	
+	[requestOperation setUploadProgressBlock:progress];
+	
+	[self enqueueHTTPRequestOperation:requestOperation];
+}
+
 - (void)deleteObjectWithPath:(NSString *)path
                      success:(void (^)(id responseObject))success
                      failure:(void (^)(NSError *error))failure
@@ -254,6 +366,53 @@ NSString * const kAFAmazonS3BucketBaseURLFormatString = @"http://%@.s3.amazonaws
 
         [self enqueueHTTPRequestOperation:requestOperation];
     }
+}
+
+- (void)signRequest:(NSMutableURLRequest *)request forObjectNamed:(NSString *)objectName
+{
+	// Set expected date header with proper format
+	NSString *dateString = [self.dateFormatter stringFromDate:[NSDate date]];
+	
+	[request setValue:dateString forHTTPHeaderField:@"Date"];
+	
+	NSString *contentMd5  = [request valueForHTTPHeaderField:@"Content-MD5"];
+	NSString *contentType = [request valueForHTTPHeaderField:@"Content-Type"];
+	NSString *timestamp   = [request valueForHTTPHeaderField:@"Date"];
+	
+	if (nil == contentMd5) {
+		contentMd5 = @"";
+	}
+	if (nil == contentType) {
+		contentType = @"";
+	}
+	
+	NSMutableString *canonicalizedAmzHeaders = [NSMutableString stringWithFormat:@""];
+	NSString *canonicalizedResource = [NSString stringWithFormat:@"/%@/%@", self.bucket, objectName];
+	NSString *query = request.URL.query;
+	
+	if (query != nil && [query length] > 0) {
+		canonicalizedResource = [canonicalizedResource stringByAppendingFormat:@"?%@", [query stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+	}
+	
+	NSString *stringToSign = [NSString stringWithFormat:@"%@\n%@\n%@\n%@\n%@%@", [request HTTPMethod], contentMd5, contentType, timestamp, canonicalizedAmzHeaders, canonicalizedResource];
+	NSLog(@"signed: %@", stringToSign);
+	
+	NSData *stringData = [stringToSign dataUsingEncoding:NSASCIIStringEncoding];
+	CCHmacContext context;
+    const char *secretCString = [self.secret cStringUsingEncoding:NSASCIIStringEncoding];
+	
+    CCHmacInit(&context, kCCHmacAlgSHA1, secretCString, strlen(secretCString));
+    CCHmacUpdate(&context, [stringData bytes], [stringData length]);
+	
+    // Both SHA1 and SHA256 will fit in here
+    unsigned char digestRaw[CC_SHA256_DIGEST_LENGTH];
+	
+    CCHmacFinal(&context, digestRaw);
+	
+    NSData *digestData = [NSData dataWithBytes:digestRaw length:CC_SHA1_DIGEST_LENGTH];
+	NSString *base64SignatureString = AFBase64EncodedStringFromData(digestData);
+	
+	[request setValue:[NSString stringWithFormat:@"AWS %@:%@", self.accessKey, base64SignatureString] forHTTPHeaderField:@"Authorization"];
 }
 
 @end
