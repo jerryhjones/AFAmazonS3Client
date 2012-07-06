@@ -137,7 +137,9 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 
 - (NSURL *)baseURL {
     if (_s3_baseURL && self.bucket) {
-        return [NSURL URLWithString:[NSString stringWithFormat:kAFAmazonS3BucketBaseURLFormatString, self.bucket]];
+		NSString *urlString = [NSString stringWithFormat:kAFAmazonS3BucketBaseURLFormatString, self.bucket];
+		NSURL *url = [NSURL URLWithString:urlString];
+        return url;
     }
 
     return _s3_baseURL;
@@ -164,7 +166,7 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 		return _dateFormatter;
 	}
 	
-	_dateFormatter = [[[NSDateFormatter alloc] init] autorelease];
+	_dateFormatter = [[NSDateFormatter alloc] init];
     [_dateFormatter setDateFormat:@"EEE, dd MMM yyyy HH:mm:ss z"];
     [_dateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"]];
 
