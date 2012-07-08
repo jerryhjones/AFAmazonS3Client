@@ -168,7 +168,8 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 	
 	_dateFormatter = [[NSDateFormatter alloc] init];
     [_dateFormatter setDateFormat:@"EEE, dd MMM yyyy HH:mm:ss z"];
-    [_dateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"]];
+	NSLocale *local =[[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] autorelease];
+    [_dateFormatter setLocale:local];
 
 	return _dateFormatter;
 }
