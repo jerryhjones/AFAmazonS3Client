@@ -183,6 +183,7 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
                                     failure:(void (^)(NSError *error))failure
 {
     NSURLRequest *request = [self requestWithMethod:method path:path parameters:parameters];
+	
     AFHTTPRequestOperation *requestOperation = [self HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *operation, id responseObject) {
         if (success) {
             success(responseObject);
@@ -266,15 +267,17 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
                   failure:(void (^)(NSError *error))failure
 {
     NSURLRequest *request = [self requestWithMethod:@"GET" path:path parameters:nil];
-    AFHTTPRequestOperation *requestOperation = [self HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *operation, id responseObject) {
-        if (success) {
-            success(responseObject);
-        }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-        if (failure) {
-            failure(error);
-        }
-    }];
+	NSURLRequest *signedRequest = [self signedRequestWithRequest:request];
+    AFHTTPRequestOperation *requestOperation = [self HTTPRequestOperationWithRequest:signedRequest
+																			 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+																				 if (success) {
+																					 success(responseObject);
+																				 }
+																			 } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+																				 if (failure) {
+																					 failure(error);
+																				 }
+																			 }];
 
     [requestOperation setUploadProgressBlock:progress];
     [requestOperation setOutputStream:outputStream];
@@ -378,6 +381,13 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
     }
 }
 
+- (NSMutableURLRequest *)signedRequestWithRequest:(NSURLRequest *)request
+{
+	NSMutableURLRequest *mutableRequest = [[request mutableCopy] autorelease];
+	[self signRequest:mutableRequest forObjectNamed:nil];
+	return mutableRequest;
+}
+
 - (void)signRequest:(NSMutableURLRequest *)request forObjectNamed:(NSString *)objectName
 {
 	// Set expected date header with proper format
@@ -397,7 +407,13 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 	}
 	
 	NSMutableString *canonicalizedAmzHeaders = [NSMutableString stringWithFormat:@""];
-	NSString *canonicalizedResource = [NSString stringWithFormat:@"/%@/%@", self.bucket, objectName];
+	NSString *path = objectName;
+	if (nil == path) {
+		path = [[request URL] path];
+		path = [path stringByReplacingOccurrencesOfString:@"/" withString:@"" options:0 range:NSMakeRange(0, 1)];
+	}
+	
+	NSString *canonicalizedResource = [NSString stringWithFormat:@"/%@/%@", self.bucket, path];
 	NSString *query = request.URL.query;
 	
 	if (query != nil && [query length] > 0) {
@@ -405,7 +421,6 @@ static NSString * AFBase64EncodedStringFromData(NSData *data)
 	}
 	
 	NSString *stringToSign = [NSString stringWithFormat:@"%@\n%@\n%@\n%@\n%@%@", [request HTTPMethod], contentMd5, contentType, timestamp, canonicalizedAmzHeaders, canonicalizedResource];
-	NSLog(@"signed: %@", stringToSign);
 	
 	NSData *stringData = [stringToSign dataUsingEncoding:NSASCIIStringEncoding];
 	CCHmacContext context;
